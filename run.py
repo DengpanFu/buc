@@ -12,9 +12,15 @@ from torch.backends import cudnn
 def main(args):
     cudnn.benchmark = True
     cudnn.enabled = True
-    
-    save_path = args.logs_dir
-    sys.stdout = Logger(osp.join(args.logs_dir, 'log'+ str(args.merge_percent)+ time.strftime(".%m_%d_%H:%M:%S") + '.txt'))
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+    if not args.no_log:
+        log_path = os.path.join(args.logs_dir, args.exp_name)
+        if not osp.exists(log_path):
+            os.makedirs(log_path)
+        log_name = args.exp_name + "_log_" \
+            + time.strftime("%Y-%m-%d_%H-%M-%S", time.gmtime()) + '.txt'
+        sys.stdout = Logger(osp.join(log_path, log_name))
+    snap_dir = osp.join(args.snap_dir, args.exp_name)
 
     # get all unlabeled data for training
     dataset_all = datasets.create(args.dataset, osp.join(args.data_dir, args.dataset))
@@ -29,24 +35,31 @@ def main(args):
             u_data=new_train_data, save_path=args.logs_dir, max_frames=args.max_frames,
             embeding_fea_size=args.fea)
 
-
-    for step in range(int(1/args.merge_percent)-1):
+    start_step, train_data, labels = BuMain.load_checkpoint(args.resume_path)
+    if train_data is not None:
+        new_train_data = train_data
+    if labels is not None:
+        cluster_id_labels = labels
+    
+    for step in range(start_step, int(1/args.merge_percent)-1):
         print('step: ',step)
 
         BuMain.train(new_train_data, step, loss=args.loss) 
-
         BuMain.evaluate(dataset_all.query, dataset_all.gallery)
 
         # get new train data for the next iteration
-        print('----------------------------------------bottom-up clustering------------------------------------------------')
-        cluster_id_labels, new_train_data = BuMain.get_new_train_data(cluster_id_labels, nums_to_merge, size_penalty=args.size_penalty)
-        print('\n\n')
+        print('---------------------bottom-up clustering-----------------------')
+        cluster_id_labels, new_train_data = BuMain.get_new_train_data(cluster_id_labels, 
+            nums_to_merge, size_penalty=args.size_penalty)
+        BuMain.save_checkpoint(snap_dir, step, new_train_data, cluster_id_labels)
+        print('\n')
 
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='bottom-up clustering')
-    parser.add_argument('-d', '--dataset', type=str, default='mars',
+    parser.add_argument('-gpu', '--gpu', type=str, default='0')
+    parser.add_argument('-d', '--dataset', type=str, default='market1501',
                         choices=datasets.names())
     parser.add_argument('-b', '--batch-size', type=int, default=16)  
     parser.add_argument('-f', '--fea', type=int, default=2048)
@@ -56,11 +69,16 @@ if __name__ == '__main__':
                         default=os.path.join(working_dir,'data'))
     parser.add_argument('--logs_dir', type=str, metavar='PATH',
                         default=os.path.join(working_dir,'logs'))
+    parser.add_argument('--snap_dir', type=str, metavar='PATH',
+                        default=os.path.join(working_dir,'snapshots'))
     parser.add_argument('--max_frames', type=int, default=900)
     parser.add_argument('--loss', type=str, default='ExLoss')
     parser.add_argument('-m', '--momentum', type=float, default=0.5)
     parser.add_argument('-s', '--step_size', type=int, default=55)
     parser.add_argument('--size_penalty',type=float, default=0.005)
     parser.add_argument('-mp', '--merge_percent',type=float, default=0.05)
+    parser.add_argument('-rep', '--resume_path', type=str, default=None)
+    parser.add_argument('-ep', '--exp_name', type=str, default='debug')
+    parser.add_argument('--no_log', '--no_log', action='store_true')
     main(parser.parse_args())
 

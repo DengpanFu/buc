@@ -8,7 +8,7 @@ import numpy as np
 from collections import OrderedDict
 import os.path as osp
 import pickle
-import copy, sys
+import copy, sys, os
 from reid.utils.serialization import load_checkpoint
 from reid.utils.data import transforms as T
 from torch.utils.data import DataLoader
@@ -57,7 +57,7 @@ class Bottom_up():
             self.frames_per_video = 16
             self.later_steps = 5
         else:
-            self.eval_bs = 64
+            self.eval_bs = 128
             self.fixed_layer = False
             self.frames_per_video = 1
             self.later_steps = 2
@@ -162,27 +162,6 @@ class Bottom_up():
         dists.addmm_(1, -2, x, y.t())
         return dists
 
-    # def select_merge_data(self, u_feas, nums_to_merge, label, label_to_images,  ratio_n,  dists):
-    #     #calculate final distance (feature distance + diversity regularization)
-    #     tri = np.tri(len(u_feas), dtype=np.float32)
-    #     tri = tri * np.iinfo(np.int32).max
-    #     tri = tri.astype('float32')
-    #     tri = torch.from_numpy(tri)
-    #     dists = dists + tri
-    #     for idx in range(len(u_feas)):
-    #         for j in range(idx + 1, len(u_feas)):
-    #             if label[idx] == label[j]:
-    #                 dists[idx, j] = np.iinfo(np.int32).max
-    #             else:
-    #                 dists[idx][j] =  dists[idx][j] + \
-    #                                 + ratio_n * ((len(label_to_images[label[idx]])) + (len(label_to_images[label[j]])))
-    #     dists = dists.numpy()
-    #     ind = np.unravel_index(np.argsort(dists, axis=None), dists.shape)
-    #     idx1 = ind[0]
-    #     idx2 = ind[1]
-    #     return idx1, idx2
-
-
     def select_merge_data(self, u_feas, label, label_to_images,  ratio_n,  dists):
         dists.add_(torch.tril(100000 * torch.ones(len(u_feas), len(u_feas))))
 
@@ -199,8 +178,6 @@ class Bottom_up():
         idx1 = ind[0]
         idx2 = ind[1]
         return idx1, idx2
-
-
 
     def generate_new_train_data(self, idx1, idx2, label,num_to_merge):
         correct = 0
@@ -265,11 +242,57 @@ class Bottom_up():
         num_train_ids = len(np.unique(np.array(labels)))
 
         # change the criterion classifer
+        self.criterion_old_param = self.criterion.V.clone()
         self.criterion = ExLoss(self.embeding_fea_size, num_train_ids, t=10).cuda()
         new_classifier = fc_avg.astype(np.float32)
         self.criterion.V = torch.from_numpy(new_classifier).cuda()
 
         return labels, new_train_data
+
+    def save_checkpoint(self, save_dir, step, train_data, labels, replace=True):
+        if save_dir is None:
+            return
+        if not osp.exists(save_dir):
+            os.makedirs(save_dir)
+        snap_path = osp.join(save_dir, 'step_{:d}.pth'.format(step))
+        if not replace and osp.exists(snap_path):
+            print('snapshot: {} already exists'.format(snap_path))
+            return 0
+        if hasattr(self.model, 'module'):
+            param_dict = self.model.module.state_dict()
+        else:
+            param_dict = self.model.state_dict()
+        loss_dict = {'old': self.criterion_old_param, 'current': self.criterion.V.clone()}
+        save_dict = {'param_dict': param_dict, 'loss_dict': loss_dict, 
+                     'new_train_data': train_data, 'cluster_id_labels': labels, 
+                     'step': step}
+        torch.save(save_dict, snap_path)
+        print('Save checkpoint to {}'.format(snap_path))
+
+    def load_checkpoint(self, snap_path):
+        if snap_path is None:
+            return 0, None, None
+        if not osp.exists(snap_path):
+            raise IOError('checkpoint: {} non-exist'.format(snap_path))
+        checkpoint = torch.load(snap_path)
+        param_dict = checkpoint.get('param_dict', None)
+        if param_dict is not None:
+            if hasattr(self.model, 'module'):
+                self.model.module.load_state_dict(param_dict)
+            else:
+                self.model.load_state_dict(param_dict)
+            print('Load net params from {}'.format(snap_path))
+        loss_dict = checkpoint.get('loss_dict', None)
+        new_train_data = checkpoint.get('new_train_data', None)
+        cluster_id_labels = checkpoint.get('cluster_id_labels', None)
+        if loss_dict is not None:
+            # self.criterion.load_state_dict(loss_dict)
+            num_train_ids = len(np.unique(np.array(cluster_id_labels)))
+            self.criterion = ExLoss(self.embeding_fea_size, num_train_ids, t=10).cuda()
+            self.criterion.V = loss_dict['current'].cuda()
+            print("Load loss params from {}".format(snap_path))
+        step = checkpoint.get('step', 0)
+        return step, new_train_data, cluster_id_labels
 
 
 def change_to_unlabel(dataset):
