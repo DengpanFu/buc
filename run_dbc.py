@@ -1,10 +1,10 @@
 from __future__ import print_function, absolute_import
-from reid.bottom_up import *
+from reid.bottom_up_dbc import *
 from reid import datasets
 from reid import models
 import numpy as np
 import argparse
-import os, sys, time
+import os, sys, time, random
 from reid.utils.logging import Logger
 import os.path as osp
 from torch.backends import cudnn
@@ -53,27 +53,32 @@ def main(args):
         new_train_data = train_data
     if labels is not None:
         cluster_id_labels = labels
-    
+    # cluster_id_labels, new_train_data = BuMain.get_new_train_data_v2(cluster_id_labels, 
+    #         nums_to_merge, 0, penalty=args.size_penalty)
+
     for step in range(start_step, int(1/args.merge_percent)-1):
         print('step: ',step)
 
         BuMain.train(new_train_data, step, loss=args.loss) 
+
+        
         BuMain.evaluate(dataset_all.query, dataset_all.gallery)
 
         # get new train data for the next iteration
         print('---------------------bottom-up clustering-----------------------')
-        cluster_id_labels, new_train_data = BuMain.get_new_train_data(cluster_id_labels, 
-            nums_to_merge, size_penalty=args.size_penalty)
-        # BuMain.save_checkpoint(snap_dir, step, new_train_data, cluster_id_labels)
-        print('\n')
+        cluster_id_labels, new_train_data = BuMain.get_new_train_data_v2(cluster_id_labels, 
+            nums_to_merge, step, penalty=args.size_penalty)
+        if args.save_snap:
+            BuMain.save_checkpoint(snap_dir, step, new_train_data, cluster_id_labels)
+        print('\n\n')
 
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='bottom-up clustering')
-    parser.add_argument('-gpu', '--gpu', type=str, default='0')
-    parser.add_argument('-d', '--dataset', type=str, default='market1501',
+    parser.add_argument('-d', '--dataset', type=str, default='mars',
                         choices=datasets.names())
+    parser.add_argument('-gpu', '--gpu', type=str, default='0')
     parser.add_argument('-b', '--batch-size', type=int, default=16)  
     parser.add_argument('-f', '--fea', type=int, default=2048)
     parser.add_argument('-a', '--arch', type=str, default='avg_pool',choices=models.names())
@@ -94,5 +99,6 @@ if __name__ == '__main__':
     parser.add_argument('--ep', dest='exp_name', type=str, default='debug')
     parser.add_argument('--no_log', dest='no_log', action='store_true')
     parser.add_argument('--seed', dest='seed', type=int, default=None)
+    parser.add_argument('--save_snap', dest='save_snap', action='store_true')
     main(parser.parse_args())
 
