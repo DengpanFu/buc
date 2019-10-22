@@ -65,9 +65,11 @@ def main(args):
         if args.mode == 'buc':
             cluster_id_labels, new_train_data = BuMain.get_new_train_data(cluster_id_labels, 
                 nums_to_merge, size_penalty=args.size_penalty)
-        elif mode == 'dbc':
+        elif args.mode == 'dbc':
             cluster_id_labels, new_train_data = BuMain.get_new_train_data_dbc(cluster_id_labels, 
                 nums_to_merge, penalty=args.size_penalty)
+        else:
+            raise ValueError('Unknown BUC mode: {}'.format(args.mode))
         if args.save_snap:
             BuMain.save_checkpoint(snap_dir, step, new_train_data, cluster_id_labels)
         print('\n')
