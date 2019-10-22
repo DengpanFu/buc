@@ -2,10 +2,11 @@ import torch
 from torch import nn
 from reid import models
 from reid.trainers import Trainer
+import itertools
 from reid.evaluators import extract_features, Evaluator
 from reid.dist_metric import DistanceMetric
 import numpy as np
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 import os.path as osp
 import pickle
 import copy, sys, os
@@ -31,6 +32,8 @@ class Bottom_up():
         self.dataset = dataset
         self.u_data = u_data
         self.u_label = np.array([label for _, label, _, _ in u_data])
+        self.label_to_images = {}
+        self.sort_image_by_label=[]
 
         self.dataloader_params = {}
         self.dataloader_params['height'] = 256
@@ -67,7 +70,6 @@ class Bottom_up():
         self.model = nn.DataParallel(model).cuda()
 
         self.criterion = ExLoss(self.embeding_fea_size, self.num_classes, t=10).cuda()
-
 
     def get_dataloader(self, dataset, training=False):
         normalizer = T.Normalize(mean=[0.485, 0.456, 0.406],
@@ -165,7 +167,7 @@ class Bottom_up():
     def select_merge_data(self, u_feas, label, label_to_images,  ratio_n,  dists):
         dists.add_(torch.tril(100000 * torch.ones(len(u_feas), len(u_feas))))
 
-        cnt = torch.FloatTensor([ len(label_to_images[label[idx]]) for idx in range(len(u_feas))])
+        cnt = torch.FloatTensor([len(label_to_images[label[idx]]) for idx in range(len(u_feas))])
         dists += ratio_n * (cnt.view(1, len(cnt)) + cnt.view(len(cnt), 1))
         
         for idx in range(len(u_feas)):
@@ -192,7 +194,7 @@ class Bottom_up():
                 label = [label2 if x == label1 else x for x in label]
             if self.u_label[idx1[i]] == self.u_label[idx2[i]]:
                 correct += 1
-            num_merged =  num_before_merge - len(np.sort(np.unique(np.array(label))))
+            num_merged = num_before_merge - len(np.sort(np.unique(np.array(label))))
             if num_merged == num_to_merge:
                 break
 
@@ -241,20 +243,117 @@ class Bottom_up():
         
         num_train_ids = len(np.unique(np.array(labels)))
 
-        # change the criterion classifer
-        self.criterion_old_param = self.criterion.V.clone()
         self.criterion = ExLoss(self.embeding_fea_size, num_train_ids, t=10).cuda()
-        # new_classifier = fc_avg.astype(np.float32)
-
-        # new_classifier = np.zeros((num_train_ids, fcs.shape[1]))
-        # tmp_lab = np.array(labels)
-        # for i in range(num_train_ids):
-        #     new_classifier[i] = fcs[tmp_lab == i].mean(axis=0)
-        # new_classifier = new_classifier.astype(np.float32)
-
-        # self.criterion.V = torch.from_numpy(new_classifier).cuda()
 
         return labels, new_train_data
+
+
+    def get_new_train_data_dbc(self, labels, nums_to_merge, penalty):
+        self.label_to_images = {}
+        for idx, l in enumerate(labels):
+            self.label_to_images[l] = self.label_to_images.get(l, []) + [idx]
+        self.sort_image_by_label = list(
+            itertools.chain.from_iterable([self.label_to_images[key] for key in sorted(self.label_to_images.keys())]))
+
+        u_feas, feature_avg, fc_avg = self.generate_average_feature_v2(labels)
+        labels = np.array(labels,np.int64)
+        u_feas_sorted = u_feas[self.sort_image_by_label]
+        labels_sorted = labels[self.sort_image_by_label]
+
+        dist = self.calculate_distance(u_feas_sorted)
+        linkages, penalized_linkages = self.linkage_calculation(dist, labels_sorted, penalty)
+        if penalty > 0:
+            idx1, idx2=self.select_merge_data_v2(u_feas_sorted, labels_sorted, penalized_linkages)
+        else:
+            idx1, idx2=self.select_merge_data_v2(u_feas_sorted, labels_sorted, linkages)
+        new_train_data, labels = self.generate_new_train_data_dbc(idx1, idx2, nums_to_merge)
+        num_train_ids = len(self.label_to_images)
+
+        self.criterion = ExLoss(self.embeding_fea_size, num_train_ids, t=10).cuda()
+        # new_classifier = fc_avg.astype(np.float32)
+        # self.criterion.V = torch.from_numpy(new_classifier).cuda()
+        return labels, new_train_data
+
+    def generate_average_feature_v2(self, labels):
+
+        u_feas, fcs = self.get_feature(self.u_data)  
+
+        feature_avg = np.zeros((len(self.label_to_images), len(u_feas[0])))
+        fc_avg = np.zeros((len(self.label_to_images), len(fcs[0])))
+        for l in self.label_to_images:
+            feas = u_feas[self.label_to_images[l]]
+            feature_avg[l] = np.mean(feas, axis=0)
+            fc_avg[l] = np.mean(fcs[self.label_to_images[l]], axis=0)
+        return u_feas, feature_avg, fc_avg
+
+    def linkage_calculation(self, dist, labels, penalty): 
+        cluster_num = len(self.label_to_images.keys())
+        start_index = np.zeros(cluster_num,dtype=np.int)
+        end_index = np.zeros(cluster_num,dtype=np.int)
+        counts=0
+        i=0
+        for key in sorted(self.label_to_images.keys()):
+            start_index[i] = counts
+            end_index[i] = counts + len(self.label_to_images[key])
+            counts = end_index[i]
+            i=i+1
+        dist=dist.numpy()
+        linkages = np.zeros([cluster_num, cluster_num])
+        for i in range(cluster_num):
+            for j in range(i, cluster_num):
+                linkage = dist[start_index[i]:end_index[i], start_index[j]:end_index[j]]
+                linkages[i,j] = np.average(linkage)
+
+        linkages = linkages.T + linkages - linkages * np.eye(cluster_num)
+        intra = linkages.diagonal()
+        penalized_linkages = linkages + penalty * ((intra * np.ones_like(linkages)).T + intra).T
+        return linkages, penalized_linkages
+
+    def select_merge_data_v2(self, u_feas, labels, linkages):
+        linkages += np.tril(100000 * np.ones_like(linkages))
+        ind = np.unravel_index(np.argsort(linkages, axis=None),
+                               linkages.shape)  
+        idx1 = ind[0] 
+        idx2 = ind[1] 
+        return idx1, idx2
+
+    def generate_new_train_data_dbc(self, idx1, idx2, num_to_merge):
+        correct = 0
+        num_before_merge = len(self.label_to_images)
+
+        sorted_clusters = sorted(self.label_to_images)
+        print('merging start')
+        for i in range(len(idx1)):
+            label1 = sorted_clusters[idx1[i]]  
+            label2 = sorted_clusters[idx2[i]]
+            if label1 not in self.label_to_images.keys() or label2 not in self.label_to_images.keys():
+                continue
+            if label1 < label2:  
+                self.label_to_images[label1] += self.label_to_images[label2]
+                self.label_to_images.pop(label2)
+            else:
+                self.label_to_images[label2] += self.label_to_images[label1]
+                self.label_to_images.pop(label1)
+            num_merged = num_before_merge - len(self.label_to_images)
+            if num_merged == num_to_merge:
+                break
+
+        unique_label = sorted(self.label_to_images.keys())
+        for i in range(len(unique_label)):
+            label_now = unique_label[i]
+            if label_now != i:
+                self.label_to_images[i] = self.label_to_images[label_now]
+                self.label_to_images.pop(label_now)
+
+
+        new_train_data = np.array(copy.deepcopy(self.u_data))
+        labels = self.assign_label(new_train_data[:,3])
+        new_train_data[:,3] = labels
+        num_after_merge = len(self.label_to_images)
+        print("num of label before merge: ", num_before_merge, " after_merge: ", num_after_merge, " sub: ",
+              num_before_merge - num_after_merge)
+        return list(new_train_data), list(labels)
+
 
     def save_checkpoint(self, save_dir, step, train_data, labels, replace=True):
         if save_dir is None:
@@ -269,10 +368,10 @@ class Bottom_up():
             param_dict = self.model.module.state_dict()
         else:
             param_dict = self.model.state_dict()
-        loss_dict = {'old': self.criterion_old_param, 'current': self.criterion.V.clone()}
-        save_dict = {'param_dict': param_dict, 'loss_dict': loss_dict, 
+
+        save_dict = {'param_dict': param_dict, 'step': step, 
                      'new_train_data': train_data, 'cluster_id_labels': labels, 
-                     'step': step}
+                     }
         torch.save(save_dict, snap_path)
         print('Save checkpoint to {}'.format(snap_path))
 
@@ -289,16 +388,11 @@ class Bottom_up():
             else:
                 self.model.load_state_dict(param_dict)
             print('Load net params from {}'.format(snap_path))
-        loss_dict = checkpoint.get('loss_dict', None)
         new_train_data = checkpoint.get('new_train_data', None)
         cluster_id_labels = checkpoint.get('cluster_id_labels', None)
-        if loss_dict is not None:
-            # self.criterion.load_state_dict(loss_dict)
-            num_train_ids = len(np.unique(np.array(cluster_id_labels)))
-            self.criterion = ExLoss(self.embeding_fea_size, num_train_ids, t=10).cuda()
-            self.criterion.V = loss_dict['current'].cuda()
-            print("Load loss params from {}".format(snap_path))
         step = checkpoint.get('step', 0)
+        if new_train_data is not None and cluster_id_labels is not None:
+            step += 1
         return step, new_train_data, cluster_id_labels
 
 

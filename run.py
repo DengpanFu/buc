@@ -62,9 +62,14 @@ def main(args):
 
         # get new train data for the next iteration
         print('---------------------bottom-up clustering-----------------------')
-        cluster_id_labels, new_train_data = BuMain.get_new_train_data(cluster_id_labels, 
-            nums_to_merge, size_penalty=args.size_penalty)
-        # BuMain.save_checkpoint(snap_dir, step, new_train_data, cluster_id_labels)
+        if args.mode == 'buc':
+            cluster_id_labels, new_train_data = BuMain.get_new_train_data(cluster_id_labels, 
+                nums_to_merge, size_penalty=args.size_penalty)
+        elif mode == 'dbc':
+            cluster_id_labels, new_train_data = BuMain.get_new_train_data_dbc(cluster_id_labels, 
+                nums_to_merge, penalty=args.size_penalty)
+        if args.save_snap:
+            BuMain.save_checkpoint(snap_dir, step, new_train_data, cluster_id_labels)
         print('\n')
 
 
@@ -74,7 +79,7 @@ if __name__ == '__main__':
     parser.add_argument('-gpu', '--gpu', type=str, default='0')
     parser.add_argument('-d', '--dataset', type=str, default='market1501',
                         choices=datasets.names())
-    parser.add_argument('-b', '--batch-size', type=int, default=16)  
+    parser.add_argument('-b', '--batch-size', type=int, default=16)
     parser.add_argument('-f', '--fea', type=int, default=2048)
     parser.add_argument('-a', '--arch', type=str, default='avg_pool',choices=models.names())
     working_dir = os.path.dirname(os.path.abspath(__file__))
@@ -90,9 +95,11 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--step_size', type=int, default=55)
     parser.add_argument('--size_penalty',type=float, default=0.005)
     parser.add_argument('-mp', '--merge_percent',type=float, default=0.05)
+    parser.add_argument('--mode', dest='mode', type=str, default='buc', choices=['buc', 'dbc'])
     parser.add_argument('--rep', dest='resume_path', type=str, default=None)
     parser.add_argument('--ep', dest='exp_name', type=str, default='debug')
     parser.add_argument('--no_log', dest='no_log', action='store_true')
     parser.add_argument('--seed', dest='seed', type=int, default=None)
+    parser.add_argument('--save_snap', dest='save_snap', action='store_true')
     main(parser.parse_args())
 
