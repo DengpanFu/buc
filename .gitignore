@@ -10,6 +10,7 @@ data/*
 logs/*
 !logs/.gitkeep
 *.pth
+*.pickle
 snapshots/*
 !snapshots/.gitkeep
 
@@ -239,6 +240,6 @@ ENV/
 # Project specific
 examples/data
 examples/logs
-#examples/*.pickle
-#*.pickle
+examples/*.pickle
+!samples/.gitkeep
 temp/
