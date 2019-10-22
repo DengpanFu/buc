@@ -239,5 +239,6 @@ ENV/
 # Project specific
 examples/data
 examples/logs
-examples/*.pickle
+#examples/*.pickle
+#*.pickle
 temp/
