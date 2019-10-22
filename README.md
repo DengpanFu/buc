@@ -1,3 +1,4 @@
+Bottom Up Cluster Unsupervised Person Re-identification
 # A Bottom-Up Clustering Approach to Unsupervised Person Re-identification
 
 Pytorch implementation for our paper [[Link]](https://vana77.github.io/vana77.github.io/images/AAAI19.pdf).
@@ -35,8 +36,4 @@ Please cite the following paper in your publications if it helps your research:
         booktitle = {AAAI Conference on Artificial Intelligence (AAAI)},
         year      = {2019}
     }
-
-
-
-
 
