@@ -4,7 +4,7 @@ from reid import models
 from reid.trainers import Trainer
 import itertools
 from reid.evaluators import extract_features, Evaluator
-from reid.dist_metric import DistanceMetric
+# from reid.dist_metric import DistanceMetric
 import numpy as np
 from collections import OrderedDict, Counter
 import os.path as osp
@@ -354,6 +354,10 @@ class Bottom_up():
               num_before_merge - num_after_merge)
         return list(new_train_data), list(labels)
 
+    def assign_label(self, labels):
+        for key in self.label_to_images.keys():
+            labels[self.label_to_images[key]] = key
+        return labels
 
     def save_checkpoint(self, save_dir, step, train_data, labels, replace=True):
         if save_dir is None:
