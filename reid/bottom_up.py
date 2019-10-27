@@ -65,8 +65,12 @@ class Bottom_up():
             self.frames_per_video = 1
             self.later_steps = 2
 
-        model = models.create(self.model_name, dropout=self.dropout, 
+        if self.model_name == 'avg_pool':
+            model = models.create(self.model_name, dropout=self.dropout, 
                               embeding_fea_size=self.embeding_fea_size, fixed_layer=self.fixed_layer)
+        else:
+            model = models.create(self.model_name, embed_dim=self.embeding_fea_size, 
+                              dropout=self.dropout, fix_part_layers=self.fixed_layer)
         self.model = nn.DataParallel(model).cuda()
 
         self.criterion = ExLoss(self.embeding_fea_size, self.num_classes, t=10).cuda()
@@ -110,11 +114,15 @@ class Bottom_up():
         """ create model and dataloader """
         dataloader = self.get_dataloader(train_data, training=True)
 
-        # the base parameters for the backbone (e.g. ResNet50)
-        base_param_ids = set(map(id, self.model.module.CNN.base.parameters()))
-
-        # we fixed the first three blocks to save GPU memory
-        base_params_need_for_grad = filter(lambda p: p.requires_grad, self.model.module.CNN.base.parameters())
+        if self.model_name == 'avg_pool':
+            # the base parameters for the backbone (e.g. ResNet50)
+            base_param_ids = set(map(id, self.model.module.CNN.base.parameters()))
+            # we fixed the first three blocks to save GPU memory
+            base_params_need_for_grad = filter(lambda p: p.requires_grad, self.model.module.CNN.base.parameters())
+        else:
+            base_param_ids = set(map(id, self.model.module.base.model.parameters()))
+            # we fixed the first three blocks to save GPU memory
+            base_params_need_for_grad = filter(lambda p: p.requires_grad, self.model.module.base.model.parameters())
 
         # params of the new layers
         new_params = [p for p in self.model.parameters() if id(p) not in base_param_ids]
@@ -136,7 +144,11 @@ class Bottom_up():
         trainer = Trainer(self.model, self.criterion, fixed_layer=self.fixed_layer)
         for epoch in range(epochs):
             adjust_lr(epoch, step_size)
-            trainer.train(epoch, dataloader, optimizer, print_freq=max(5, len(dataloader) // 30 * 10))
+            # trainer.train(epoch, dataloader, optimizer, print_freq=max(5, len(dataloader) // 30 * 10))
+            trainer.train(epoch, dataloader, optimizer, print_freq=1)
+            if step == 0:
+                if (epoch + 1) % 5 == 0 and epoch != epochs - 1:
+                    self.evaluate(self.dataset.query, self.dataset.gallery)
 
     def get_feature(self, dataset):
         dataloader = self.get_dataloader(dataset, training=False)

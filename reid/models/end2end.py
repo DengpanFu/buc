@@ -29,7 +29,7 @@ class AvgPooling(nn.Module):
         self.drop = nn.Dropout(dropout)
 
     def forward(self, inputs):
-        net = inputs.mean(dim = 1)            
+        net = inputs.mean(dim = 1)
         eval_feas = F.normalize(net, p=2, dim=1)
         net = self.embeding(net)
         net = self.embeding_bn(net)
@@ -59,3 +59,14 @@ class End2End_AvgPooling(nn.Module):
         # avg pooling
         output = self.avg_pooling(resnet_feature)
         return output
+
+    def print_params(self, concise=True):
+        for name, v in self.named_parameters():
+            if concise:
+                print("{:<36}  mean:{:<12.4e}  std:{:<12.4e} grad: {}".format(
+                    name, v.mean().item(), v.std().item(), v.requires_grad))
+            else:
+                print("{:<40}  min:{:<12.4e}  max:{:<12.4e}  " \
+                      "mean:{:<12.4e}  std:{:<12.4e} grad: {}".format(
+                        name, v.min().item(), v.max().item(), 
+                        v.mean().item(), v.std().item(), v.requires_grad))

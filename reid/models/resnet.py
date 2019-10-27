@@ -4,7 +4,7 @@ from torch import nn
 from torch.nn import functional as F
 from torch.nn import init
 import torchvision
-
+import collections
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
            'resnet152']
@@ -43,6 +43,7 @@ class ResNet(nn.Module):
                 fixed_names.append(name)
                 for param in module.parameters():
                     param.requires_grad = False
+                
 
         if not self.cut_at_pooling:
             self.num_features = num_features
@@ -71,6 +72,13 @@ class ResNet(nn.Module):
                 init.normal(self.classifier.weight, std=0.001)
                 init.constant(self.classifier.bias, 0)
 
+        self.base = nn.Sequential(collections.OrderedDict(
+                list(self.base._modules.items())[:-2]))
+
+        # for module in self.base.layer4[0].modules():
+        #         if isinstance(module, nn.Conv2d):
+        #             module.stride = (1, 1)
+
         if not self.pretrained:
             self.reset_params()
 
@@ -83,6 +91,8 @@ class ResNet(nn.Module):
 
         if self.cut_at_pooling:
             return x
+
+        # x = self.base(x)
 
         x = F.avg_pool2d(x, x.size()[2:])
         x = x.view(x.size(0), -1)

@@ -1,10 +1,13 @@
 from __future__ import absolute_import
 
 from .end2end import *
+from .ide_model import IDEModel, BUCModel
 
 
 __factory = {
-    'avg_pool': End2End_AvgPooling,
+    'avg_pool': End2End_AvgPooling, 
+    'ide': IDEModel, 
+    'buc': BUCModel, 
 }
 
 
